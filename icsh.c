@@ -13,36 +13,69 @@ void trim_str(char *str) { //removing trailing newline \n to \0
 	size_t len = strlen(str);
 	if (len > 0 && str[len-1] == '\n') str[len-1] = 0;
 }
-int main() {
-    char buffer[MAX_CMD_BUFFER];
-    char last_command[MAX_CMD_BUFFER]; //store last command if !!
 
-    printf("Welcome! Starting IC shell\n"); //welcome message
-    while (1) {
-        printf("icsh $ ");
-        fgets(buffer, 255, stdin);
+int command_process(char *buffer, char *last_command, int file_indicator) {
+	if (strlen(buffer) == 0) return 0;
 
-	trim_str(buffer); //remove trailing newline
-			 
-	if(strlen(buffer) == 0) { continue;} //if no command, skip and prompt again
-
-	// handling !!
-	if(strcmp(buffer, "!!") == 0) {
-		if(strlen(last_command) == 0) {continue;} //no last command
-		printf("%s\n", last_command);
+	if (strcmp(buffer, "!!") == 0) {
+		if (strlen(last_command) == 0) return 0; //if no command pevious exists
+		if (file_indicator) printf("%s\n", last_command);
 		strcpy(buffer, last_command);
 	} else {
 		strcpy(last_command, buffer);
 	}
 
-	if (strncmp(buffer, "echo ", 5) == 0) {
+	if (strncmp(buffer, "echo ", 5) == 0) { //command starts with echo
 		printf("%s\n", buffer + 5);
-	} else if(strncmp(buffer, "exit ", 5) ==0) {
-			int exit_code = atoi(buffer + 5) % 256; //make sure to fit within 0-255
-			printf("bye\n");
-			return exit_code;
+	} else if (strncmp(buffer, "exit ", 5) == 0) { //command starts with exit
+		int exit_code = atoi(buffer + 5) & 0xFF; //converting string to int
+		if (file_indicator) printf("bye\n");
+		exit(exit_code);
 	} else {
-		printf("bad command\n");
+		if (file_indicator) printf("bad command\n");
 	}
-    }
+	return 0;
+
+}
+
+int main(int argc, char *argv[]) {
+	char buffer[MAX_CMD_BUFFER];
+	char last_command[MAX_CMD_BUFFER]; //store last command if !!
+	FILE *input_file =stdin;
+	int file_indicator = 1; //1 - interactive, 0- script file
+	
+
+	if (argc ==2) { // only one argument
+		input_file = fopen(argv[1], "r"); //open file to read
+		if (input_file == NULL) { //can't open file
+			fprintf(stderr, "Error: can't open file %s\n", argv[1]);
+			return 1;
+		}
+		file_indicator = 0;
+	}
+
+	if (file_indicator) {
+		printf("Welcome! Starting IC shell\n"); //welcome message
+	}
+
+
+	while (1) {
+
+    		if (file_indicator) {
+			printf("icsh $ ");
+		}
+
+		//end of file or error
+		if(fgets(buffer, 255, input_file)==NULL) {
+			break;
+		}
+
+		trim_str(buffer); //remove trailing newline
+			 
+		command_process(buffer, last_command, file_indicator); // handling command
+	}
+
+	if (input_file != stdin) fclose(input_file); //closing file
+						    
+	return 0;
 }
