@@ -6,14 +6,51 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 #define MAX_CMD_BUFFER 255
 
-void trim_str(char *str) { //removing trailing newline \n to \0
+//remove trailing newline \n to \0
+void trim_str(char *str) {
 	size_t len = strlen(str);
 	if (len > 0 && str[len-1] == '\n') str[len-1] = 0;
 }
 
+//split command str into arr of arguments for external program
+void parse_command(char *command, char **args) {
+	char *token =strtok(command, " \t"); //first token
+	for (int i = 0; i < 23 && token !=NULL; i++) {
+		args[i] = token; //curr token stored in args array
+		token = strtok(NULL, " \t"); //get next token
+		if(token == NULL) {
+			args[i+1] = NULL;
+			break;
+		}
+	}
+}
+
+//run external programs (unix fork/exec/wait)
+int process_external(char **args) {
+	pid_t pid = fork();
+
+	if (pid==0) { //child process
+		if (execvp(args[0], args)==-1) { //replace child with external program
+			perror("icsh");
+			exit(1);
+		}
+	} else if (pid >0) { //parent process
+		int status;
+		waitpid(pid, &status, 0);
+		return 0;
+	} else {
+		perror("icsh: fork failed");
+		return -1;
+	}
+	return 0;
+}
+
+//process individual commands
 int command_process(char *buffer, char *last_command, int file_indicator) {
 	if (strlen(buffer) == 0) return 0;
 
@@ -31,11 +68,21 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
 		int exit_code = atoi(buffer + 5) & 0xFF; //converting string to int
 		if (file_indicator) printf("bye\n");
 		exit(exit_code);
+	} else if (strcmp(buffer, "exit") ==0) {
+		if (file_indicator) printf("bye\n");
+		exit(0);
 	} else {
-		if (file_indicator) printf("bad command\n");
+		char *args[24]; //arr to hold command arguments (24 max)
+		char buffer_copy[MAX_CMD_BUFFER];
+		strcpy(buffer_copy, buffer);
+		parse_command(buffer_copy, args); //split command into arr
+		if(args[0]!= NULL) {
+			if (process_external(args) ==-1){
+				if(file_indicator) printf("bad command\n");
+			}
+		}
 	}
 	return 0;
-
 }
 
 int main(int argc, char *argv[]) {
