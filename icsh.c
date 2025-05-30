@@ -8,8 +8,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #define MAX_CMD_BUFFER 255
+
+//global variables
+pid_t foreground_pid = 0;
+int last_status = 0; //exit status of last command - 0=success, non-0=error
 
 //remove trailing newline \n to \0
 void trim_str(char *str) {
@@ -30,18 +35,56 @@ void parse_command(char *command, char **args) {
 	}
 }
 
+void sigint_handler(int signal) {
+	if (foreground_pid >0) {
+		kill(foreground_pid, SIGINT);
+		printf("\n");
+	} 
+	printf("\n");
+	if (foreground_pid == 0) {
+		printf("icsh $ ");
+		fflush(stdout); //force output bugger to display prompt
+	}
+}
+
+void sigtstp_handler(int signal) {
+	if(foreground_pid > 0) {
+		kill(foreground_pid, SIGTSTP);
+		printf("\n");
+	}
+	printf("\n");
+	if (foreground_pid == 0) {
+		printf("icsh $ ");
+		fflush(stdout);
+	}
+}
+
 //run external programs (unix fork/exec/wait)
 int process_external(char **args) {
 	pid_t pid = fork();
 
 	if (pid==0) { //child process
+		
+		// reset SIGINT and SIGTSTP to default 
+		signal(SIGINT, SIG_DFL);
+		signal(SIGTSTP, SIG_DFL);
+
 		if (execvp(args[0], args)==-1) { //replace child with external program
 			perror("icsh");
 			exit(1);
 		}
 	} else if (pid >0) { //parent process
+		foreground_pid = pid;
 		int status;
-		waitpid(pid, &status, 0);
+		waitpid(pid, &status, 0); //waiting for child to complete
+		foreground_pid = 0; //clear when done
+		
+		//exit status for ?
+		if(WIFEXITED(status)) { //process exited normally
+			last_status = WEXITSTATUS(status);
+		} else if (WIFSIGNALED(status)) { //process killed by a signal
+			last_status = 128 + WTERMSIG(status);
+		}
 		return 0;
 	} else {
 		perror("icsh: fork failed");
@@ -63,7 +106,12 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
 	}
 
 	if (strncmp(buffer, "echo ", 5) == 0) { //command starts with echo
+		if (strcmp(buffer + 5, "$?")==0) {
+			printf("%d\n", last_status);
+		} else {
 		printf("%s\n", buffer + 5);
+		}
+		last_status =0;
 	} else if (strncmp(buffer, "exit ", 5) == 0) { //command starts with exit
 		int exit_code = atoi(buffer + 5) & 0xFF; //converting string to int
 		if (file_indicator) printf("bye\n");
@@ -79,6 +127,7 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
 		if(args[0]!= NULL) {
 			if (process_external(args) ==-1){
 				if(file_indicator) printf("bad command\n");
+				last_status = 1;
 			}
 		}
 	}
@@ -91,6 +140,9 @@ int main(int argc, char *argv[]) {
 	FILE *input_file =stdin;
 	int file_indicator = 1; //1 - interactive, 0- script file
 	
+	//signal handlers
+	signal(SIGINT, sigint_handler);
+	signal(SIGTSTP, sigtstp_handler);
 
 	if (argc ==2) { // only one argument
 		input_file = fopen(argv[1], "r"); //open file to read
@@ -110,6 +162,7 @@ int main(int argc, char *argv[]) {
 
     		if (file_indicator) {
 			printf("icsh $ ");
+			fflush(stdout);
 		}
 
 		//end of file or error
@@ -126,3 +179,4 @@ int main(int argc, char *argv[]) {
 						    
 	return 0;
 }
+
