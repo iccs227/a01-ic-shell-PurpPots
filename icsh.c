@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <fcntl.h>
 
 #define MAX_CMD_BUFFER 255
 
@@ -21,6 +22,33 @@ void trim_str(char *str) {
 	size_t len = strlen(str);
 	if (len > 0 && str[len-1] == '\n') str[len-1] = 0;
 }
+
+//check and handle I/O redirection
+int check_io_redirection(char **args, char **input_file, char **output_file) {
+	int argc = 0; //counter for command arguments
+	*input_file = NULL;
+	*output_file = NULL;
+
+	for (int i=0; args[i] != NULL; i++) {
+		if (strcmp(args[i], "<") ==0) { //input direction
+			if (args[i+1] != NULL) {
+				*input_file = args[i+1]; //set input file to name after
+				i++; //skip filename
+			}
+		} else if (strcmp(args[i], ">") ==0) { //output direction
+			if (args[i+1] != NULL) {
+				*output_file = args[i+1]; //set output file to name after
+				i++; //skip filename
+			}
+		} else {
+			args[argc] = args[i];
+			argc++;
+		}
+	}
+	args[argc] = NULL;
+	return argc;
+}
+
 
 //split command str into arr of arguments for external program
 void parse_command(char *command, char **args) {
@@ -61,6 +89,11 @@ void sigtstp_handler(int signal) {
 
 //run external programs (unix fork/exec/wait)
 int process_external(char **args) {
+
+	char *input_file = NULL;
+	char *output_file = NULL;
+	check_io_redirection(args, &input_file, &output_file);
+
 	pid_t pid = fork();
 
 	if (pid==0) { //child process
@@ -69,10 +102,31 @@ int process_external(char **args) {
 		signal(SIGINT, SIG_DFL);
 		signal(SIGTSTP, SIG_DFL);
 
+		if (input_file != NULL) {
+			int fd = open(input_file, O_RDONLY);
+			if (fd == -1) { //file couldn't be open
+				perror("icsh: input redirection");
+				exit(1);
+			}
+			dup2(fd, 0); //redirect stdin to the opened file
+			close(fd);
+		}
+
+		if (output_file != NULL) {
+			int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+			if (fd == -1) { //error opening file
+				perror("icsh: output redirection");
+				exit(1);
+			}
+			dup2(fd,1);
+			close(fd);
+		}
+
 		if (execvp(args[0], args)==-1) { //replace child with external program
 			perror("icsh");
 			exit(1);
 		}
+
 	} else if (pid >0) { //parent process
 		foreground_pid = pid;
 		int status;
