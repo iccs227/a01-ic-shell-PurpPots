@@ -28,7 +28,7 @@ typedef struct {
 
 job_t jobs[100]; //arr for background jobs, max 100
 int job_count = 0;
-int next_job_id;
+int next_job_id=1;
 
 //check if command should run in background
 int is_background(char **args) { // 1 if background, 0 if foreground
@@ -161,7 +161,7 @@ void check_background_jobs() {
 //printing all background jobs
 void print_jobs() {
     for (int i=0; i<job_count; i++) {
-        char *status_str;
+        char *status_str; //status to display in string
         if (jobs[i].status == 0) {
             status_str = "running";
         } else if (jobs[i].status == 2) {
@@ -235,35 +235,13 @@ void sigint_handler(int signal) {
 }
 
 void sigtstp_handler(int signal) {
-	
-	printf("[DEBUG] ctrl+z pressed with foreground pid =  %d\n", foreground_pid);
-
-	if(foreground_pid > 0) {
-		printf("[DEBUG] Sending SIGTSTP to PID %d\n", foreground_pid);
-		kill(foreground_pid, SIGTSTP);
-		
-		int found_job = 0; //for debugging
-		for (int i = 0; i< job_count; i++) {
-            if (jobs[i].pid == foreground_pid) { //if this job matches and is foreground
-                jobs[i].status = 2; //status stopped
-                jobs[i].is_curr = 1;
-
-                for(int j=0; j<job_count; j++) {
-                    if (j!=i) jobs[j].is_curr = 0; //remove current status
-                }
-		found_job - 1;
-                break;
-            }
-        }
-	if (!found_job) printf("[DEBUG] foreground job not in background list");
-
+    if(foreground_pid > 0) {
+	printf("[DEBUG] sending SIGTSTP to PID %d only\n", foreground_pid);
+        kill(foreground_pid, SIGTSTP);
         printf("\n");
     } else {
-	    printf("[DEBUG] no foreground process to stop \n");
-	    printf("\n");
-    }
-    //printf("\n");
-    if (foreground_pid == 0) {
+	printf("[DEBUG] no foreground process to stop\n");
+        printf("\n");
         printf("icsh $ ");
         fflush(stdout);
     }
@@ -280,6 +258,7 @@ int process_external(char **args, int is_background) {
 
     if (pid==0) { //child process
         
+	if (is_background) setpgid(0,0);
         // reset SIGINT and SIGTSTP to default 
         signal(SIGINT, SIG_DFL);
         signal(SIGTSTP, SIG_DFL);
@@ -324,8 +303,7 @@ int process_external(char **args, int is_background) {
         } else {
             foreground_pid = pid;
             int status;
-            waitpid(pid, &status, 0); //waiting for child to complete
-            
+            waitpid(pid, &status, WUNTRACED); //waiting for child to complete
             if (WIFSTOPPED(status)) { // if process was stopped
                 char command_str[MAX_CMD_BUFFER];
                 command_str[0] = '\0';
@@ -336,6 +314,7 @@ int process_external(char **args, int is_background) {
                 }
                 add_background_job(pid, command_str);
                 jobs[job_count-1].status = 2; //stopped status
+                printf("[%d]+ stopped    %s\n", jobs[job_count-1].job_id, command_str);
                 last_status = 128 + WSTOPSIG(status);
             } else {
                 //exit status for ?
@@ -347,7 +326,7 @@ int process_external(char **args, int is_background) {
             }
 
             foreground_pid = 0; //clear foreground PID when process finished/stopped
-        }
+    }
         return 0;
     } else {
         perror("icsh: fork failed");
@@ -365,7 +344,7 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
         if (file_indicator) printf("%s\n", last_command);
         strcpy(buffer, last_command);
     } else {
-        strcpy(last_command, buffer);
+        strcpy(last_command, buffer); //store curr command as last command for !!
     }
 
     if (strncmp(buffer, "echo ", 5) == 0) { //command starts with echo
@@ -386,6 +365,14 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
             printf("icsh: fg: job ID should start with %%\n");
             last_status = 1;
         }
+    } else if (strncmp(buffer, "bg ", 3) == 0) {
+    if (buffer[3] == '%') {
+        int job_id = atoi(buffer + 4);
+        send_background(job_id);
+    } else {
+        printf("icsh: bg: job ID must start with %%\n");
+        last_status=1;
+    }
     } else if (strncmp(buffer, "exit ", 5) == 0) { //command starts with exit
         int exit_code = atoi(buffer + 5) & 0xFF; //converting string to int
         if (file_indicator) printf("bye\n");
