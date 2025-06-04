@@ -10,12 +10,17 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <time.h>
 
 #define MAX_CMD_BUFFER 255
 
 //global variables
 pid_t foreground_pid = 0;
 int last_status = 0; //exit status of last command - 0=success, non-0=error
+
+//for milestone 7
+time_t session_start;
+int commands_run = 0;
 
 // structure for background jobs
 typedef struct {
@@ -160,6 +165,12 @@ void check_background_jobs() {
 
 //printing all background jobs
 void print_jobs() {
+    
+    if (job_count == 0) {
+	    printf("No current jobs");
+	    return;
+    }
+
     for (int i=0; i<job_count; i++) {
         char *status_str; //status to display in string
         if (jobs[i].status == 0) {
@@ -236,11 +247,9 @@ void sigint_handler(int signal) {
 
 void sigtstp_handler(int signal) {
     if(foreground_pid > 0) {
-	printf("[DEBUG] sending SIGTSTP to PID %d only\n", foreground_pid);
         kill(foreground_pid, SIGTSTP);
         printf("\n");
     } else {
-	printf("[DEBUG] no foreground process to stop\n");
         printf("\n");
         printf("icsh $ ");
         fflush(stdout);
@@ -339,12 +348,39 @@ int process_external(char **args, int is_background) {
 int command_process(char *buffer, char *last_command, int file_indicator) {
     if (strlen(buffer) == 0) return 0;
 
+    // !!
     if (strcmp(buffer, "!!") == 0) {
         if (strlen(last_command) == 0) return 0; //if no command pevious exists
         if (file_indicator) printf("%s\n", last_command);
         strcpy(buffer, last_command);
     } else {
         strcpy(last_command, buffer); //store curr command as last command for !!
+    	if (file_indicator) commands_run++; //add to counter
+    }
+
+    //milestone 7
+    if (strcmp(buffer, "yeet") == 0) {
+	    if (file_indicator) printf("Bye bestie!✨\n");
+	    exit(0); //exit shell
+    }
+
+    if (strcmp(buffer, "stats") == 0) {
+	    time_t now = time(NULL);
+	    int minutes = (now - session_start)/60; //minutes
+	    int seconds = (now - session_start)%60; //remaining seconds
+	    printf("Session stats:\n");
+	    printf("Time: %d minutes, %d seconds\n", minutes, seconds);
+	    printf("Number of commands run: %d\n", commands_run);
+	    if (commands_run < 5) {
+		    printf("Nice!👍\n");
+	    } else if (commands_run < 10) {
+		    printf("You're productive!\n");
+	    } else {
+		    printf("Dayumn, that's a lot!👀\n");
+	    }
+
+	    last_status = 0;
+	    return 0;
     }
 
     if (strncmp(buffer, "echo ", 5) == 0) { //command starts with echo
@@ -417,6 +453,7 @@ int main(int argc, char *argv[]) {
 
     if (file_indicator) {
         printf("Welcome! Starting IC shell\n"); //welcome message
+    	session_start = time(NULL);
     }
 
 
