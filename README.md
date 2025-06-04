@@ -2,3 +2,20 @@
 # ICSH
 
 Please describe your assumptions and/or implementation here. 
+
+## Project Overview
+- Built-in commands (echo, !!,  exit, jobs, fg, bg, etc.)
+- Background job execution (using &)
+- Signal handling
+- Custom commands - milestone 7
+'stats'-> show time and number of commands run, 
+'yeet'-> delete last commands history
+
+## Sources used to code
+WTERMSIG, WIFSTOPPED, WIFEXITED, WIFSIGNALED - https://man7.org/linux/man-pages/man2/wait.2.html
+128 - https://www.baeldung.com/linux/status-codes
+WNOHANG - WUNTRACED - https://linux.die.net/man/2/waitpid
+Ternary operator - https://www.geeksforgeeks.org/conditional-or-ternary-operator-in-c/
+Execvp - Resources section (canvas)
+
+
