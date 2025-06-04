@@ -88,7 +88,7 @@ void make_foreground(int job_id) {
         printf("icsh: fg: %d: no such job\n", job_id);
         last_status = 1; //error exit status
         return;
-    }
+    }  
 
     for (int i=0; i< job_count; i++) {
         jobs[i].is_curr = (i == index); //true for target job
@@ -174,9 +174,9 @@ void print_jobs() {
     for (int i=0; i<job_count; i++) {
         char *status_str; //status to display in string
         if (jobs[i].status == 0) {
-            status_str = "running";
+            status_str = "Running";
         } else if (jobs[i].status == 2) {
-            status_str = "stopped";
+            status_str = "Stopped";
         } else { 
             status_str = "done";
         }
@@ -292,10 +292,8 @@ int process_external(char **args, int is_background) {
             close(fd);
         }
 
-        if (execvp(args[0], args)==-1) { //replace child with external program
-            perror("icsh");
-            exit(1);
-        }
+        execvp(args[0], args); //try to execute program
+	exit(127); //command not found standard
 
     } else if (pid >0) { //parent process
         
@@ -323,11 +321,16 @@ int process_external(char **args, int is_background) {
                 }
                 add_background_job(pid, command_str);
                 jobs[job_count-1].status = 2; //stopped status
-                printf("[%d]+ stopped    %s\n", jobs[job_count-1].job_id, command_str);
+                printf("[%d]+ Stopped    %s\n", jobs[job_count-1].job_id, command_str);
                 last_status = 128 + WSTOPSIG(status);
             } else {
-                //exit status for ?
-                if(WIFEXITED(status)) { //process exited normally
+                
+                if(WIFEXITED(status)&& WEXITSTATUS(status)==127) { //failed to exec
+		    last_status = 127; //127 standard for "command not found"
+		    foreground_pid = 0;
+		    return -1;
+		}
+		if (WIFEXITED(status)) { //process exited normally
                     last_status = WEXITSTATUS(status);
                 } else if (WIFSIGNALED(status)) { //process killed by a signal
                     last_status = 128 + WTERMSIG(status);
@@ -354,14 +357,16 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
         if (file_indicator) printf("%s\n", last_command);
         strcpy(buffer, last_command);
     } else {
-        strcpy(last_command, buffer); //store curr command as last command for !!
-    	if (file_indicator) commands_run++; //add to counter
+	strcpy(last_command, buffer);
+	if (file_indicator) commands_run++;
     }
 
     //milestone 7
     if (strcmp(buffer, "yeet") == 0) {
-	    if (file_indicator) printf("Bye bestie!✨\n");
-	    exit(0); //exit shell
+	    if (file_indicator) printf("Cleared commands!\n");
+	    last_command[0] = '\0';
+	    last_status = 0;
+	    return 0;
     }
 
     if (strcmp(buffer, "stats") == 0) {
@@ -382,7 +387,7 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
 	    last_status = 0;
 	    return 0;
     }
-
+    //echo
     if (strncmp(buffer, "echo ", 5) == 0) { //command starts with echo
         if (strcmp(buffer + 5, "$?")==0) {
             printf("%d\n", last_status);
@@ -390,10 +395,12 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
             printf("%s\n", buffer + 5);
         }
         last_status =0;
+    //jobs
     } else if (strcmp(buffer, "jobs") == 0) {
         print_jobs(); //printing all jobs
         last_status = 0;
-    } else if (strncmp(buffer, "fg ", 3) == 0) { //command if fg
+    //fg
+    } else if (strncmp(buffer, "fg ", 3) == 0) { 
         if (buffer[3] == '%') { //if job ID starts with %
             int job_id = atoi(buffer + 4); //convert to integer
             make_foreground(job_id);
@@ -401,21 +408,25 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
             printf("icsh: fg: job ID should start with %%\n");
             last_status = 1;
         }
-    } else if (strncmp(buffer, "bg ", 3) == 0) {
-    if (buffer[3] == '%') {
-        int job_id = atoi(buffer + 4);
-        send_background(job_id);
-    } else {
-        printf("icsh: bg: job ID must start with %%\n");
-        last_status=1;
-    }
+    //bg	
+    } else if (strncmp(buffer, "bg ", 3) == 0) { //command if bg
+        if (buffer[3] == '%') {
+            int job_id = atoi(buffer + 4);
+            send_background(job_id);
+        } else {
+            printf("icsh: bg: job ID must start with %%\n");
+            last_status=1;
+        }
+    //exit with argument
     } else if (strncmp(buffer, "exit ", 5) == 0) { //command starts with exit
         int exit_code = atoi(buffer + 5) & 0xFF; //converting string to int
-        if (file_indicator) printf("bye\n");
+        if (file_indicator) printf("Bye bestie!✨\n");
         exit(exit_code);
+    //exit no argument	
     } else if (strcmp(buffer, "exit") ==0) {
-        if (file_indicator) printf("bye\n");
-        exit(0);
+	    if (file_indicator) printf("Bye bestie!✨\n");
+	    exit(0);
+    //external commands
     } else {
         char *args[24]; //arr to hold command arguments (24 max)
         char buffer_copy[MAX_CMD_BUFFER];
@@ -423,10 +434,12 @@ int command_process(char *buffer, char *last_command, int file_indicator) {
         parse_command(buffer_copy, args); //split command into arr
         if(args[0]!= NULL) {
             int is_bg = is_background(args);
-            if (process_external(args, is_bg) ==-1){
-                if(file_indicator) printf("bad command\n");
-                last_status = 1;
-            }
+	    int result = process_external(args, is_bg);
+	    if(result == -1) { //external command failed
+		if(file_indicator) printf("Bad command\n");
+		last_status = 1;
+		last_command[0] = '\0'; //clear last command so !! won't repeat bad command
+	    }
         }
     }
     return 0;
